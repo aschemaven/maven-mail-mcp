@@ -79,9 +79,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           # Branch names with / are converted to - (e.g., feature/xxx -> feature-xxx)
+          # main branch gets both 'latest' and 'main' tags
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch,enable=${{ github.ref_name != 'main' }}
+            type=ref,event=branch
             type=ref,event=pr
 
       - name: Build and push Docker image
