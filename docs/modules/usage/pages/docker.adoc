@@ -70,13 +70,15 @@ Image:: `docker.elastic.co/elasticsearch/elasticsearch:8.11.0`
 Ports:: 9200 (HTTP API), 9300 (transport)
 Configuration:: Single-node cluster, security disabled for local development
 
-=== Kibana
+=== Kibana (Optional)
 
 Web UI for exploring and visualizing Elasticsearch data.
+Kibana is not started by default - use the `analysis` profile to start it on demand.
 
 Image:: `docker.elastic.co/kibana/kibana:8.11.0`
 Ports:: 5601 (HTTP)
 Access:: http://localhost:55601
+Profile:: `analysis` (start with `docker compose --profile analysis up -d kibana`)
 Features::
 * Discover - Search and filter documents
 * Visualizations - Create charts and graphs
@@ -125,19 +127,26 @@ include::ROOT:partial$mcp-config.adoc[]
 [source,bash]
 ----
 # Start all services (Elasticsearch, mail-mcp, scheduler)
+# Note: Kibana is NOT started by default
 docker compose up -d
 
 # Start Elasticsearch only
 docker compose up -d elasticsearch
 
-# Start Elasticsearch and Kibana (for data exploration)
-docker compose up -d elasticsearch kibana
+# Start Kibana for data exploration (optional, on-demand)
+docker compose --profile analysis up -d kibana
 
 # View logs
 docker compose logs -f mail-mcp
 docker compose logs -f scheduler
 docker compose logs -f elasticsearch
 ----
+
+[NOTE]
+====
+All services have `restart: unless-stopped` policy.
+They will automatically restart when Docker restarts, unless explicitly stopped.
+====
 
 === Stop Services
 
@@ -218,6 +227,12 @@ docker volume rm mail-mcp_es-data
 == Using Kibana
 
 Kibana provides a web-based interface for exploring your indexed email data.
+
+[NOTE]
+====
+Kibana is not started by default.
+Start it with: `docker compose --profile analysis up -d kibana`
+====
 
 === First Time Setup
 
@@ -311,21 +326,25 @@ GET maven-dev/_search
 
 [source,bash]
 ----
-# Start Elasticsearch and Kibana
-docker compose up -d elasticsearch kibana
+# Start core services (Elasticsearch, mail-mcp, scheduler)
+docker compose up -d
 
-# Wait for services to be ready
+# Wait for Elasticsearch to be ready
 curl --retry 10 --retry-delay 2 http://localhost:59200/_cluster/health
-curl --retry 10 --retry-delay 2 http://localhost:55601/api/status
 
 # Work with the application
 poetry shell
 python -m mail_mcp.storage.elasticsearch  # Example
 
-# Open Kibana for data exploration
+# Start Kibana for data exploration (when needed)
+docker compose --profile analysis up -d kibana
+curl --retry 10 --retry-delay 2 http://localhost:55601/api/status
 open http://localhost:55601
 
-# When done
+# Stop Kibana when done with analysis
+docker compose stop kibana
+
+# Stop all services when done
 docker compose down
 ----
 

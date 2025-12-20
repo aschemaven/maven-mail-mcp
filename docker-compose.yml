@@ -45,9 +45,13 @@ services:
       retries: 5
     networks:
       - mail-mcp-network
+    restart: unless-stopped
 
-  # Kibana for data visualization and exploration
+  # Kibana for data visualization and exploration (optional, start manually)
+  # Start with: docker compose --profile analysis up -d kibana
   kibana:
+    profiles:
+      - analysis
     image: docker.elastic.co/kibana/kibana:8.11.0
     container_name: mail-mcp-kibana
     environment:
@@ -67,6 +71,7 @@ services:
       start_period: 60s
     networks:
       - mail-mcp-network
+    restart: unless-stopped
 
   # mail-mcp MCP server
   mail-mcp:

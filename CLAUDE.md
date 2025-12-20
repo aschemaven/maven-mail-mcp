@@ -92,13 +92,22 @@ poetry run update-current-month --list dev@maven.apache.org --data-dir ./data
 The `docker-compose.yml` defines the following services:
 
 - **elasticsearch**: Elasticsearch 8.11 for storing and searching email data
-- **kibana**: Kibana for data visualization
+- **kibana**: Kibana for data visualization (optional, profile: `analysis`)
 - **mail-mcp**: The MCP server (HTTP transport on port 58080)
 - **scheduler**: Runs hourly to fetch and re-index the current month's mbox for all configured lists (dev@ and users@)
 
+All services have `restart: unless-stopped` policy - they automatically restart when Docker restarts.
+
 ```bash
-# Start all services including scheduler
+# Start core services (Elasticsearch, mail-mcp, scheduler)
+# Note: Kibana is NOT started by default
 docker compose up -d
+
+# Start Kibana for data exploration (optional, on-demand)
+docker compose --profile analysis up -d kibana
+
+# Stop Kibana when done with analysis
+docker compose stop kibana
 
 # View scheduler logs
 docker compose logs -f scheduler
