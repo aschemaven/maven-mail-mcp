@@ -1,0 +1,173 @@
+//
+// Copyright 2025 The Apache Software Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+= ADR-0005: Smart Update Strategy for Mailing List Archives
+:revdate: 2025-12-21
+
+== Status
+
+Accepted
+
+== Context
+
+The scheduler runs hourly to keep the mailing list archive index up-to-date.
+The original implementation always fetched and re-indexed the current month's mbox file, regardless of whether new emails had arrived.
+
+This approach had two problems:
+
+. **Wasted bandwidth**: Fetching ~1-5 MB mbox files hourly even when no new emails arrived
+. **Month transition race condition**: When the month changes (e.g., December → January), late-arriving emails from the previous month could be missed because the scheduler would only fetch the new current month
+
+=== The Race Condition
+
+Consider this scenario:
+
+. Scheduler runs at 23:59 on December 31st, fetches December 2025
+. Month changes to January 2026
+. Late emails arrive for December 2025 (mail servers have delays)
+. Next scheduler run fetches January 2026 only
+. December 2025 emails are permanently missed
+
+== Decision
+
+Implement a **smart update strategy** that:
+
+. Uses the Apache Lists `stats.lua` API to get expected message counts per month
+. Compares expected counts with indexed document counts in Elasticsearch
+. Only fetches mbox files when counts differ
+. Marks past months as "complete" when counts match, skipping them in future runs
+
+=== Algorithm
+
+[source]
+----
+For each configured mailing list:
+  1. Fetch stats from https://lists.apache.org/api/stats.lua
+     → Get expected message counts for current + previous month
+
+  2. For PREVIOUS month:
+     ├─ Is marked complete in metadata? → SKIP
+     ├─ Query Elasticsearch for indexed count
+     ├─ Counts match? → Mark complete, SKIP fetch
+     └─ Counts differ? → FETCH mbox, index, then mark complete
+
+  3. For CURRENT month:
+     ├─ Query Elasticsearch for indexed count
+     ├─ Counts match? → Log "up to date" (never mark complete)
+     └─ Counts differ? → FETCH mbox and index
+----
+
+=== Metadata Storage
+
+Completion markers are stored in a dedicated Elasticsearch index (`maven-meta`):
+
+[source,json]
+----
+{
+  "_id": "dev@maven.apache.org:2025-11",
+  "list_name": "dev@maven.apache.org",
+  "year_month": "2025-11",
+  "complete": true,
+  "expected_count": 247,
+  "checked_at": "2025-12-21T10:00:00Z"
+}
+----
+
+== Consequences
+
+=== Positive
+
+* **Bandwidth efficient**: Only fetches when new emails exist
+* **No missed emails**: Previous month is always checked until marked complete
+* **Fast execution**: Completed months are skipped entirely (no Elasticsearch count query needed)
+* **Self-healing**: If counts mismatch due to indexing errors, re-fetching occurs automatically
+
+=== Negative
+
+* **Additional API dependency**: Relies on `stats.lua` endpoint availability
+* **Slight complexity**: More code paths than simple "always fetch" approach
+* **Metadata index**: Requires additional Elasticsearch index for tracking
+
+=== Neutral
+
+* Stats API call is lightweight (~10KB response for full history)
+* One stats call per list per scheduler run (not per month)
+
+== Alternatives Considered
+
+=== A: Always Fetch Current + Previous Month
+
+Simple brute-force approach: always fetch both months regardless of changes.
+
+Rejected because::
+* Wastes bandwidth for 29+ days per month (when previous month hasn't changed)
+* Still requires full mbox download even when no changes
+
+=== B: Compare Stats Only (No Completion Markers)
+
+Check stats API and compare counts, but don't persist completion status.
+
+Rejected because::
+* Still requires Elasticsearch count query for every past month
+* Less efficient as archive grows (more months to check)
+
+=== C: HTTP ETag/Last-Modified Headers
+
+Use HTTP conditional requests to check if mbox content changed.
+
+Rejected because::
+* Apache Lists API doesn't provide reliable ETag/Last-Modified headers for mbox files
+* Would still require fetching the full file to compare
+
+== Implementation
+
+=== New Components
+
+`src/mail_mcp/api/apache_lists.py`::
+Client for Apache Lists stats API (`stats.lua` endpoint)
+
+=== Modified Components
+
+`src/mail_mcp/storage/elasticsearch.py`::
+Added methods: `count_by_month()`, `mark_month_complete()`, `is_month_complete()`
+
+`src/mail_mcp/cli/update_current_month.py`::
+Refactored to use smart update logic with stats comparison
+
+=== API Endpoint Used
+
+[source]
+----
+GET https://lists.apache.org/api/stats.lua?list=dev&domain=maven.apache.org
+
+Response:
+{
+  "firstYear": 2002,
+  "lastYear": 2025,
+  "firstMonth": 7,
+  "lastMonth": 12,
+  "active_months": {
+    "2025-11": 247,
+    "2025-12": 84,
+    ...
+  }
+}
+----
+
+== References
+
+* https://lists.apache.org/[Apache Pony Mail] - Powers lists.apache.org
+* https://github.com/apache/incubator-ponymail-foal[Pony Mail Foal] - Current implementation

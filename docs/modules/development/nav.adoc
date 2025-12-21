@@ -24,3 +24,4 @@
 ** xref:development:adr/0002-technology-stack.adoc[ADR-0002: Technology Stack]
 ** xref:development:adr/0003-archive-url-resolution.adoc[ADR-0003: Archive URL Resolution]
 ** xref:development:adr/0004-lenient-mypy-configuration.adoc[ADR-0004: Lenient Mypy Config]
+** xref:development:adr/0005-smart-update-strategy.adoc[ADR-0005: Smart Update Strategy]

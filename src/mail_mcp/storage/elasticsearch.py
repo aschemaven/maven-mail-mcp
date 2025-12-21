@@ -16,6 +16,8 @@
 
 """Elasticsearch client wrapper for mail archive storage."""
 
+from datetime import datetime
+
 import structlog
 from elasticsearch import AsyncElasticsearch, NotFoundError
 from elasticsearch.helpers import async_bulk
@@ -377,6 +379,173 @@ class ElasticsearchClient:
         )
 
         return result
+
+    async def count_by_month(
+        self,
+        list_name: str,
+        year_month: str
+    ) -> int:
+        """
+        Count documents for a specific month.
+
+        Args:
+            list_name: Mailing list address
+            year_month: Month in yyyy-mm format (e.g., "2025-12")
+
+        Returns:
+            Number of documents for that month
+        """
+        if not self._client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        index_name = get_index_name(settings.elasticsearch_index_prefix, list_name)
+
+        # Check if index exists first
+        exists = await self._client.indices.exists(index=index_name)
+        if not exists:
+            return 0
+
+        # Parse year-month and create date range
+        year, month = map(int, year_month.split("-"))
+        # Calculate next month for range query
+        if month == 12:
+            next_year, next_month = year + 1, 1
+        else:
+            next_year, next_month = year, month + 1
+
+        start_date = f"{year:04d}-{month:02d}-01"
+        end_date = f"{next_year:04d}-{next_month:02d}-01"
+
+        query = {
+            "range": {
+                "date": {
+                    "gte": start_date,
+                    "lt": end_date
+                }
+            }
+        }
+
+        result = await self._client.count(index=index_name, query=query)
+        count = result.get("count", 0)
+
+        logger.debug(
+            "count_by_month",
+            index=index_name,
+            year_month=year_month,
+            count=count
+        )
+
+        return count
+
+    async def get_month_status(
+        self,
+        list_name: str,
+        year_month: str
+    ) -> dict | None:
+        """
+        Get completion status for a specific month.
+
+        Args:
+            list_name: Mailing list address
+            year_month: Month in yyyy-mm format
+
+        Returns:
+            Status dict with 'complete', 'expected_count', 'checked_at' or None
+        """
+        if not self._client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        meta_index = f"{settings.elasticsearch_index_prefix}-meta"
+
+        # Check if meta index exists
+        exists = await self._client.indices.exists(index=meta_index)
+        if not exists:
+            return None
+
+        doc_id = f"{list_name}:{year_month}"
+
+        try:
+            result = await self._client.get(index=meta_index, id=doc_id)
+            return result["_source"]
+        except NotFoundError:
+            return None
+
+    async def mark_month_complete(
+        self,
+        list_name: str,
+        year_month: str,
+        expected_count: int
+    ) -> None:
+        """
+        Mark a month as complete (no more emails expected).
+
+        Args:
+            list_name: Mailing list address
+            year_month: Month in yyyy-mm format
+            expected_count: Expected message count from stats API
+        """
+        if not self._client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        meta_index = f"{settings.elasticsearch_index_prefix}-meta"
+
+        # Ensure meta index exists with minimal mapping
+        exists = await self._client.indices.exists(index=meta_index)
+        if not exists:
+            await self._client.indices.create(
+                index=meta_index,
+                settings={"number_of_shards": 1, "number_of_replicas": 0},
+                mappings={
+                    "properties": {
+                        "list_name": {"type": "keyword"},
+                        "year_month": {"type": "keyword"},
+                        "complete": {"type": "boolean"},
+                        "expected_count": {"type": "integer"},
+                        "checked_at": {"type": "date"}
+                    }
+                }
+            )
+            logger.info("meta_index_created", index=meta_index)
+
+        doc_id = f"{list_name}:{year_month}"
+        document = {
+            "list_name": list_name,
+            "year_month": year_month,
+            "complete": True,
+            "expected_count": expected_count,
+            "checked_at": datetime.utcnow().isoformat()
+        }
+
+        await self._client.index(
+            index=meta_index,
+            id=doc_id,
+            document=document
+        )
+
+        logger.info(
+            "month_marked_complete",
+            list=list_name,
+            year_month=year_month,
+            expected_count=expected_count
+        )
+
+    async def is_month_complete(
+        self,
+        list_name: str,
+        year_month: str
+    ) -> bool:
+        """
+        Check if a month is marked as complete.
+
+        Args:
+            list_name: Mailing list address
+            year_month: Month in yyyy-mm format
+
+        Returns:
+            True if month is marked complete, False otherwise
+        """
+        status = await self.get_month_status(list_name, year_month)
+        return status is not None and status.get("complete", False)
 
     async def __aenter__(self):
         """Async context manager entry."""
