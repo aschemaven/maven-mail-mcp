@@ -20,6 +20,7 @@
 search_emails::
 Full-text search across email archives with date and metadata filters.
 Supports filtering by JIRA references and votes.
+Results are ranked by relevance; pass `sort_by="date"` for the most recent matches instead.
 
 search_by_contributor::
 Find all emails from a specific contributor by email address or name.

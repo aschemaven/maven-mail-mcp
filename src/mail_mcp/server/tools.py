@@ -192,6 +192,7 @@ async def search_emails(
     has_jira: bool | None = None,
     has_vote: bool | None = None,
     size: int = 10,
+    sort_by: str = "relevance",
 ) -> str:
     """
     Search Maven mailing list archives.
@@ -205,6 +206,8 @@ async def search_emails(
         has_jira: Filter for emails with JIRA references
         has_vote: Filter for emails with votes
         size: Maximum number of results (default: 10, max: 100)
+        sort_by: "relevance" (default) ranks by match quality;
+            "date" returns the most recent matches instead
 
     Returns:
         Formatted search results with message details
@@ -268,17 +271,22 @@ async def search_emails(
     # Build Elasticsearch query (just the query part, not full request body)
     es_query = {"bool": {"must": must_conditions}}
 
-    # Execute search - sort by date descending for most recent first
     client = await get_es_client()
+
+    # Relevance by default. Sorting on date discards the score the multi_match
+    # above computes, which turns every query into "the newest mail that
+    # matches anything": with best_fields over ~140k documents almost
+    # everything matches weakly, so different queries returned the same recent
+    # threads and the hit count was always the track_total_hits cap.
+    sort_spec = None if sort_by == "relevance" else [{"date": {"order": "desc"}}]
 
     try:
         # Note: client.search() will call get_index_name() internally
-        # Sort by date descending to get most recent emails first
         results = await client.search(
             list_name,
             es_query,
             size=size,
-            sort=[{"date": {"order": "desc"}}]
+            sort=sort_spec
         )
     except Exception as e:
         logger.error("search_failed", error=str(e), exc_info=True)
