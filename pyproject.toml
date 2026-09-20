@@ -39,8 +39,12 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp>=0.9.0",
-    "elasticsearch (>=8.11.0,<9.0.0)",
+    # Upper bound is required: mcp 2.x renamed FastMCP to MCPServer and changed
+    # other APIs, so an unbounded range turns any rebuild into a crash loop
+    # ("No module named 'mcp.server.fastmcp'"). Lift it together with the
+    # migration to the 2.x API, not before.
+    "mcp>=0.9.0,<2",
+    "elasticsearch>=9.0.0,<10.0.0",
     "httpx>=0.27.0",
     "pydantic-settings>=2.0.0",
     "structlog>=24.1.0",
